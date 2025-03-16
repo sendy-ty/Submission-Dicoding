@@ -3,8 +3,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
+from datetime import datetime
 
 st.set_page_config(page_title="Dashboard Bike Sharing", layout="wide")
+
+# Add sidebar for date range selection
+st.sidebar.image("https://raw.githubusercontent.com/sendy-ty/Submission1/refs/heads/main/Dashboard/bike%20sharing.jpg", width=200)
+st.sidebar.title("Rentang Waktu")
+
 @st.cache_data
 def load_data():
     file_paths = [
@@ -37,9 +43,82 @@ df = load_data()
 if df.empty:
     st.warning("Data kosong. Pastikan file all_data.csv tersedia atau upload file yang valid.")
     st.stop()
-df["date"] = pd.to_datetime(df["year_day"].astype(str) + "-" + df["month_day"].astype(str), format="%Y-%m", errors='coerce')
-df_filtered = df[df["year_day"] >= (df["year_day"].max() - 1)]
 
+# Convert year and month to datetime for filtering - with improved error handling
+try:
+    # Make sure columns are numeric before conversion
+    # Check if month_day is already a string type (with month names)
+    if df["month_day"].dtype == object:
+        # Try to convert month names to month numbers
+        month_map = {
+            'January': 1, 'February': 2, 'March': 3, 'April': 4, 'May': 5, 'June': 6,
+            'July': 7, 'August': 8, 'September': 9, 'October': 10, 'November': 11, 'December': 12,
+            'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'Jun': 6, 'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+        }
+        df["month_day"] = df["month_day"].map(month_map).fillna(df["month_day"])
+    
+    # Convert to integers, with error handling
+    df["year_day"] = pd.to_numeric(df["year_day"], errors="coerce")
+    df["month_day"] = pd.to_numeric(df["month_day"], errors="coerce")
+    
+    # Add a day column if it doesn't exist (use 1 as default)
+    if "day_day" not in df.columns:
+        df["day_day"] = 1
+    else:
+        df["day_day"] = pd.to_numeric(df["day_day"], errors="coerce").fillna(1)
+    
+    # Create proper datetime with year, month, and day
+    df["date"] = pd.to_datetime(
+        df["year_day"].astype(str) + "-" + 
+        df["month_day"].astype(str).str.zfill(2) + "-" + 
+        df["day_day"].astype(str).str.zfill(2), 
+        format="%Y-%m-%d", 
+        errors='coerce'
+    )
+    
+    # Drop rows with invalid dates
+    df = df.dropna(subset=["date"])
+except Exception as e:
+    st.error(f"Error converting dates: {e}")
+    # Create a date column with default values as fallback
+    df["date"] = pd.date_range(start='2021-01-01', periods=len(df), freq='D')
+
+# Add date range selector in sidebar
+min_date = df["date"].min().date()
+max_date = df["date"].max().date()
+
+# Format date strings for display
+try:
+    min_date_str = min_date.strftime("%Y/%m/%d")
+    max_date_str = max_date.strftime("%Y/%m/%d")
+except:
+    min_date = datetime(2021, 1, 1).date()
+    max_date = datetime(2021, 12, 31).date()
+    min_date_str = "2021/01/01"
+    max_date_str = "2021/12/31"
+
+# Improved date range input with more granular selection
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    start_date = st.date_input("Tanggal Mulai", min_date, min_value=min_date, max_value=max_date)
+with col2:
+    end_date = st.date_input("Tanggal Akhir", max_date, min_value=min_date, max_value=max_date)
+
+# Format selected date range for display
+selected_range = f"{start_date.strftime('%Y/%m/%d')} - {end_date.strftime('%Y/%m/%d')}"
+st.sidebar.text(f"Range yang dipilih: {selected_range}")
+
+# Filter data based on selected date range - with error handling
+try:
+    df_filtered = df[(df["date"].dt.date >= start_date) & (df["date"].dt.date <= end_date)]
+    if df_filtered.empty:
+        st.warning("Tidak ada data dalam rentang waktu yang dipilih.")
+        df_filtered = df  # Use all data if filtered data is empty
+except Exception as e:
+    st.error(f"Error saat memfilter data: {e}")
+    df_filtered = df  # Use all data if error occurs
+
+# Main dashboard content
 st.title("📊 Dashboard Analisis Bike Sharing")
 st.markdown("""
 ### 🔍 Perkenalan Dataset
@@ -50,6 +129,9 @@ Dataset ini berisi data peminjaman sepeda dalam dua tahun terakhir. , mencakup b
 - Faktor waktu, seperti tren peminjaman berdasarkan bulan, musim, dan akhir pekan.
 Melalui analisis ini, kita akan melihat bagaimana berbagai faktor ini mempengaruhi peminjaman sepeda. 
 """)
+
+# Display current filter info
+st.info(f"Data ditampilkan untuk rentang waktu: {selected_range}")
 
 # **Pertanyaan 1: Dampak Cuaca terhadap Peminjaman**
 st.header("1️⃣ Seberapa besar dampak kondisi cuaca terhadap jumlah peminjaman sepeda pada akhir pekan dalam dua tahun terakhir?")
@@ -91,7 +173,7 @@ data = {
     "month_day": [1, 3, 6, 9, 12, 4, 7, 10, 2, 5, 8, 11], 
     "count_day": [4700, 2300, 4800, 5500, 4600, 2200, 4900, 5600, 4800, 2400, 5000, 5700]  
 }
-df_filtered = pd.DataFrame(data)
+df_seasonal = pd.DataFrame(data)
 def get_season(month):
     if month in [12, 1, 2]:
         return "Musim Dingin"
@@ -102,8 +184,8 @@ def get_season(month):
     else:
         return "Musim Gugur"
 
-df_filtered["Season"] = df_filtered["month_day"].apply(get_season)
-season_avg = df_filtered.groupby("Season")["count_day"].mean().reset_index()
+df_seasonal["Season"] = df_seasonal["month_day"].apply(get_season)
+season_avg = df_seasonal.groupby("Season")["count_day"].mean().reset_index()
 fig, ax = plt.subplots(figsize=(8, 5))
 sns.barplot(
     x="Season", 
@@ -137,8 +219,8 @@ sample_data = {
 }
 
 try:
-    if "casual_day" in df.columns and "registered_day" in df.columns and "weekday_day" in df.columns:
-        df_for_q3 = df
+    if "casual_day" in df_filtered.columns and "registered_day" in df_filtered.columns and "weekday_day" in df_filtered.columns:
+        df_for_q3 = df_filtered  # Use filtered data based on date range
     else:
         df_for_q3 = pd.DataFrame(sample_data)
 except:
